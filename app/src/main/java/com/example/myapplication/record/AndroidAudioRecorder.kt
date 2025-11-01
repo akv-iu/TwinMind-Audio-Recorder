@@ -3,28 +3,26 @@ package com.example.myapplication.record
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
-import androidx.annotation.RequiresApi
-import androidx.compose.material3.carousel.rememberCarouselState
 import java.io.File
 import java.io.FileOutputStream
 
+
 class AndroidAudioRecorder(
     private val context: Context
-        ):AudioRecorder {
+) : AudioRecorder {
+
     private var recorder: MediaRecorder? = null
 
-    @RequiresApi(Build.VERSION_CODES.S)
-    private fun createRecorder(): MediaRecorder{
+    private fun createRecorder(): MediaRecorder =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
 
-    return if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-    {
-        MediaRecorder(context)
-
-    } else MediaRecorder()
-}
-    @RequiresApi(Build.VERSION_CODES.S)
     override fun start(outputFile: File) {
-        createRecorder().apply{
+        createRecorder().apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -35,14 +33,13 @@ class AndroidAudioRecorder(
 
             recorder = this
         }
-
     }
 
     override fun stop() {
-        recorder?.stop()
-        recorder?.reset()
+        recorder?.apply {
+            try { stop() } catch (_: Exception) {}
+            release()
+        }
         recorder = null
-
-
     }
 }
