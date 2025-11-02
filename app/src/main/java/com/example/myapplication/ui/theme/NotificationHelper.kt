@@ -20,6 +20,10 @@ class NotificationHelper(private val context: Context) {
         private const val AUDIO_SOURCE_CHANNEL_ID = "audio_source_channel"
         private const val AUDIO_SOURCE_CHANNEL_NAME = "Audio Source Changes"
         private const val AUDIO_SOURCE_NOTIFICATION_ID = 2002
+        
+        private const val STORAGE_CHANNEL_ID = "storage_warnings_channel"
+        private const val STORAGE_CHANNEL_NAME = "Storage Warnings"
+        private const val STORAGE_NOTIFICATION_ID = 2003
     }
     
     init {
@@ -49,7 +53,16 @@ class NotificationHelper(private val context: Context) {
                 setShowBadge(false)
             }
             
-            notificationManager.createNotificationChannels(listOf(pauseChannel, audioSourceChannel))
+            // Storage warning channel
+            val storageChannel = NotificationChannel(
+                STORAGE_CHANNEL_ID,
+                STORAGE_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Warnings when storage is running low during recording"
+            }
+            
+            notificationManager.createNotificationChannels(listOf(pauseChannel, audioSourceChannel, storageChannel))
         }
     }
     
@@ -132,5 +145,93 @@ class NotificationHelper(private val context: Context) {
      */
     fun hideAudioSourceChangeNotification() {
         NotificationManagerCompat.from(context).cancel(AUDIO_SOURCE_NOTIFICATION_ID)
+    }
+    
+    /**
+     * Show low storage warning notification
+     */
+    fun showLowStorageNotification(availableMB: Long, isCritical: Boolean) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT 
+            else 
+                PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        val (title, message, icon) = if (isCritical) {
+            Triple(
+                "Recording Stopped - Low Storage",
+                "Recording stopped automatically. Only ${availableMB}MB storage remaining.",
+                android.R.drawable.ic_dialog_alert
+            )
+        } else {
+            Triple(
+                "Low Storage Warning",
+                "Storage running low: ${availableMB}MB remaining. Recording may stop soon.",
+                android.R.drawable.stat_sys_warning
+            )
+        }
+        
+        val notification = NotificationCompat.Builder(context, STORAGE_CHANNEL_ID)
+            .setSmallIcon(icon)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        
+        try {
+            NotificationManagerCompat.from(context).notify(STORAGE_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            // Notification permission not granted - silently fail
+        }
+    }
+    
+    /**
+     * Show insufficient storage error notification
+     */
+    fun showInsufficientStorageNotification(availableMB: Long) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT 
+            else 
+                PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        val notification = NotificationCompat.Builder(context, STORAGE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Cannot Start Recording")
+            .setContentText("Insufficient storage: ${availableMB}MB available. Need at least 50MB.")
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("Cannot start recording due to insufficient storage space. ${availableMB}MB available, but at least 50MB is required. Please free up some space and try again."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        
+        try {
+            NotificationManagerCompat.from(context).notify(STORAGE_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            // Notification permission not granted - silently fail
+        }
+    }
+    
+    /**
+     * Hide storage notifications
+     */
+    fun hideStorageNotifications() {
+        NotificationManagerCompat.from(context).cancel(STORAGE_NOTIFICATION_ID)
     }
 }

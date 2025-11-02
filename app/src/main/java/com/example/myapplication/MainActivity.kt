@@ -49,29 +49,51 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         // Handle permission results if needed
+        android.util.Log.e("TWINMIND_DEBUG", "PERMISSIONS CALLBACK RECEIVED")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        android.util.Log.e("TWINMIND_DEBUG", "MAINACTIVITY ONCREATE CALLED - APP IS STARTING")
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         
-        // Request necessary permissions
-        val permissions = mutableListOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.READ_PHONE_STATE
-        )
-        
-        // Add notification permission for Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        
-        multiplePermissionLauncher.launch(permissions.toTypedArray())
-
-        setContent {
-            MyApplicationTheme {
-                AudioRecorderApp()
+        try {
+            android.util.Log.e("TWINMIND_DEBUG", "MAINACTIVITY ONCREATE TRY BLOCK STARTED")
+            enableEdgeToEdge()
+            android.util.Log.e("TWINMIND_DEBUG", "EDGE TO EDGE ENABLED")
+            
+            // Request necessary permissions
+            val permissions = mutableListOf(
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.READ_PHONE_STATE
+            )
+            
+            // Add notification permission for Android 13+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
+            
+            // Add Bluetooth permission for Android 12+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            
+            multiplePermissionLauncher.launch(permissions.toTypedArray())
+            android.util.Log.d("MainActivity", "Permission request sent")
+        } catch (e: Exception) {
+            android.util.Log.e("TWINMIND_DEBUG", "ERROR IN MAINACTIVITY ONCREATE", e)
+        }
+        android.util.Log.e("TWINMIND_DEBUG", "MAINACTIVITY ONCREATE METHOD COMPLETED")
+
+        try {
+            android.util.Log.w("TwinMindApp", "ABOUT TO SET CONTENT AND CREATE UI")
+            setContent {
+                MyApplicationTheme {
+                    AudioRecorderApp()
+                }
+            }
+            android.util.Log.w("TwinMindApp", "MAINACTIVITY ONCREATE COMPLETED SUCCESSFULLY")
+        } catch (e: Exception) {
+            android.util.Log.e("TwinMindApp", "ERROR SETTING CONTENT", e)
         }
     }
     
@@ -80,7 +102,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AudioRecorderApp() {
+    android.util.Log.w("MainActivity", "CREATING RECORDINGVIEWMODEL...")
     val viewModel: RecordingViewModel = viewModel()
+    android.util.Log.w("MainActivity", "RECORDINGVIEWMODEL CREATED SUCCESSFULLY")
+    
     val status by viewModel.status
     val timerText by viewModel.timerText
     val recordings by viewModel.recordings

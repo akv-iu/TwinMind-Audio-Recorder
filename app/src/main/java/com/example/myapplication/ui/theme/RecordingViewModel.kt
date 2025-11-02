@@ -22,6 +22,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executor
 import com.example.myapplication.audio.AudioDeviceManager
+import com.example.myapplication.storage.StorageManager
 
 class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -32,7 +33,34 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
-        setupPhoneStateListener()
+        try {
+            android.util.Log.i("RecordingViewModel", "==========================================")
+            android.util.Log.i("RecordingViewModel", "STARTING RECORDINGVIEWMODEL INITIALIZATION")
+            android.util.Log.i("RecordingViewModel", "==========================================")
+            
+            // Simple storage path test first
+            val app = getApplication<Application>()
+            val externalDir = app.getExternalFilesDir(null)
+            android.util.Log.w("TwinMindApp", "STORAGE PATH TEST:")
+            android.util.Log.w("TwinMindApp", "External files dir: ${externalDir?.absolutePath}")
+            android.util.Log.w("TwinMindApp", "External dir exists: ${externalDir?.exists()}")
+            android.util.Log.w("TwinMindApp", "External dir readable: ${externalDir?.canRead()}")
+            android.util.Log.w("TwinMindApp", "External dir writable: ${externalDir?.canWrite()}")
+            
+            setupPhoneStateListener()
+            
+            // Test storage immediately during initialization
+            android.util.Log.w("RecordingViewModel", "TESTING STORAGE DURING INIT...")
+            testStorageChecker()
+            
+            updateStorageStatus()
+            android.util.Log.i("RecordingViewModel", "==========================================")
+            android.util.Log.i("RecordingViewModel", "VIEWMODEL INITIALIZATION COMPLETED!")
+            android.util.Log.i("RecordingViewModel", "==========================================")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "ERROR DURING VIEWMODEL INITIALIZATION", e)
+            // Don't let initialization crash the app
+        }
     }
 
     private val _status = mutableStateOf<Status>(Status.Stopped)
@@ -40,6 +68,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _timerText = mutableStateOf("00:00")
     val timerText: State<String> = _timerText
+    
+    private val _storageStatus = mutableStateOf("Storage: Checking...")
+    val storageStatus: State<String> = _storageStatus
 
     private val _recordings = mutableStateOf<List<RecordingItem>>(emptyList())
     val recordings: State<List<RecordingItem>> = _recordings
@@ -74,6 +105,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     private var audioDeviceManager: AudioDeviceManager? = null
     private var currentAudioDevice = AudioDeviceManager.AudioDeviceType.DEVICE_MIC
     private var currentDeviceName = "Device Microphone"
+    
+    // Storage management
+    private val storageManager = StorageManager(app)
 
     fun toggleRecord() {
         when (_status.value) {
@@ -92,6 +126,14 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startRecording() {
+        // Check storage before starting
+        if (!storageManager.hasEnoughStorageToStart()) {
+            val storageInfo = storageManager.getStorageInfo()
+            android.util.Log.w("RecordingViewModel", "Insufficient storage to start recording: ${storageInfo.availableMB}MB available")
+            notificationHelper.showInsufficientStorageNotification(storageInfo.availableMB)
+            return
+        }
+        
         val file = File(
             getApplication<Application>().getExternalFilesDir(null),
             "meeting_${timestamp()}.m4a"
@@ -108,6 +150,11 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Start monitoring audio device changes
         startAudioDeviceMonitoring()
+        
+        // Start monitoring storage during recording
+        startStorageMonitoring()
+        
+        android.util.Log.d("RecordingViewModel", "Recording started with ${storageManager.getStorageDescription()}")
     }
 
     fun stopRecording() {
@@ -143,29 +190,39 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Stop monitoring audio device changes
         stopAudioDeviceMonitoring()
+        
+        // Stop storage monitoring
+        stopStorageMonitoring()
     }
 
     /**
      * Start monitoring audio device changes
      */
     private fun startAudioDeviceMonitoring() {
-        android.util.Log.d("RecordingViewModel", "Starting audio device monitoring")
-        
-        if (audioDeviceManager == null) {
-            audioDeviceManager = AudioDeviceManager(getApplication()) { deviceType, deviceName ->
-                handleAudioDeviceChange(deviceType, deviceName)
+        try {
+            android.util.Log.d("RecordingViewModel", "Starting audio device monitoring")
+            
+            if (audioDeviceManager == null) {
+                audioDeviceManager = AudioDeviceManager(getApplication()) { deviceType, deviceName ->
+                    handleAudioDeviceChange(deviceType, deviceName)
+                }
             }
+            audioDeviceManager?.startMonitoring()
+            
+            // Get initial device state
+            val (initialDevice, initialName) = audioDeviceManager?.getCurrentDevice() 
+                ?: Pair(AudioDeviceManager.AudioDeviceType.DEVICE_MIC, "Device Microphone")
+            
+            currentAudioDevice = initialDevice
+            currentDeviceName = initialName
+            
+            android.util.Log.d("RecordingViewModel", "Initial audio device: $initialName ($initialDevice)")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error starting audio device monitoring", e)
+            // Use default device if monitoring fails
+            currentAudioDevice = AudioDeviceManager.AudioDeviceType.DEVICE_MIC
+            currentDeviceName = "Device Microphone"
         }
-        audioDeviceManager?.startMonitoring()
-        
-        // Get initial device state
-        val (initialDevice, initialName) = audioDeviceManager?.getCurrentDevice() 
-            ?: Pair(AudioDeviceManager.AudioDeviceType.DEVICE_MIC, "Device Microphone")
-        
-        currentAudioDevice = initialDevice
-        currentDeviceName = initialName
-        
-        android.util.Log.d("RecordingViewModel", "Initial audio device: $initialName ($initialDevice)")
     }
     
     /**
@@ -174,6 +231,109 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     fun testAudioDeviceDetection() {
         android.util.Log.d("RecordingViewModel", "=== MANUAL AUDIO DEVICE TEST ===")
         audioDeviceManager?.forceDeviceDetection()
+    }
+    
+    /**
+     * Manual method to test storage checker (for debugging)
+     */
+    fun testStorageChecker() {
+        android.util.Log.w("RecordingViewModel", "============ STORAGE TEST START ============")
+        try {
+            val storageInfo = storageManager.getStorageInfo()
+            val hasEnough = storageManager.hasEnoughStorageToStart()
+            val status = storageManager.getStorageStatus()
+            val description = storageManager.getStorageDescription()
+            val estimatedTime = storageManager.getEstimatedRecordingTimeMinutes()
+            
+            android.util.Log.i("RecordingViewModel", "STORAGE RESULTS:")
+            android.util.Log.i("RecordingViewModel", "  Total: ${storageInfo.totalMB}MB")
+            android.util.Log.i("RecordingViewModel", "  Available: ${storageInfo.availableMB}MB")
+            android.util.Log.i("RecordingViewModel", "  Used: ${storageInfo.usedMB}MB")
+            android.util.Log.i("RecordingViewModel", "  Usage: ${String.format("%.1f", storageInfo.usagePercent)}%")
+            android.util.Log.i("RecordingViewModel", "  Has enough to start: $hasEnough")
+            android.util.Log.i("RecordingViewModel", "  Status: $status")
+            android.util.Log.i("RecordingViewModel", "  Description: $description")
+            android.util.Log.i("RecordingViewModel", "  Estimated time: ${estimatedTime} minutes")
+            android.util.Log.i("RecordingViewModel", "  Current UI status: ${_storageStatus.value}")
+            
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "ERROR IN STORAGE TEST", e)
+        }
+        android.util.Log.w("RecordingViewModel", "============ STORAGE TEST END ============")
+    }
+    
+    /**
+     * Start monitoring storage during recording
+     */
+    private fun startStorageMonitoring() {
+        // Update initial storage status
+        updateStorageStatus()
+        
+        storageManager.startStorageMonitoring { availableMB, isCritical ->
+            handleLowStorage(availableMB, isCritical)
+            updateStorageStatus()
+        }
+    }
+    
+    /**
+     * Stop storage monitoring
+     */
+    private fun stopStorageMonitoring() {
+        storageManager.stopStorageMonitoring()
+        notificationHelper.hideStorageNotifications()
+    }
+    
+    /**
+     * Handle low storage during recording
+     */
+    private fun handleLowStorage(availableMB: Long, isCritical: Boolean) {
+        android.util.Log.w("RecordingViewModel", 
+            "Low storage detected: ${availableMB}MB available, critical: $isCritical")
+        
+        if (isCritical && _status.value is Status.Recording) {
+            // Critical storage - stop recording immediately
+            android.util.Log.e("RecordingViewModel", "Stopping recording due to critical low storage")
+            
+            // Show critical storage notification
+            notificationHelper.showLowStorageNotification(availableMB, isCritical = true)
+            
+            // Stop recording gracefully
+            stopRecording()
+            
+        } else if (!isCritical) {
+            // Warning level - just notify user
+            notificationHelper.showLowStorageNotification(availableMB, isCritical = false)
+        }
+    }
+    
+    /**
+     * Get current storage information for UI display
+     */
+    fun getStorageDescription(): String {
+        return storageManager.getStorageDescription()
+    }
+    
+    /**
+     * Get estimated recording time based on available storage
+     */
+    fun getEstimatedRecordingTimeMinutes(): Long {
+        return storageManager.getEstimatedRecordingTimeMinutes()
+    }
+    
+    /**
+     * Update storage status for UI display
+     */
+    private fun updateStorageStatus() {
+        try {
+            android.util.Log.d("RecordingViewModel", "Updating storage status")
+            val description = storageManager.getStorageDescription()
+            val estimatedMinutes = storageManager.getEstimatedRecordingTimeMinutes()
+            _storageStatus.value = "$description (~${estimatedMinutes}min)"
+            android.util.Log.d("RecordingViewModel", "Storage status updated: ${_storageStatus.value}")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error updating storage status", e)
+            _storageStatus.value = "Storage: Error checking"
+        }
     }
     
     /**
@@ -342,14 +502,16 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         
     private fun setupPhoneStateListener() {
-        val app = getApplication<Application>()
-        
-        // Check if we have the required permission
-        if (ActivityCompat.checkSelfPermission(app, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-
         try {
+            android.util.Log.d("RecordingViewModel", "Setting up phone state listener")
+            val app = getApplication<Application>()
+            
+            // Check if we have the required permission
+            if (ActivityCompat.checkSelfPermission(app, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+                android.util.Log.d("RecordingViewModel", "READ_PHONE_STATE permission not granted, skipping phone state listener setup")
+                return
+            }
+
             telephonyManager = app.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -360,8 +522,11 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
                 setupLegacyPhoneStateListener()
             }
             
+            android.util.Log.d("RecordingViewModel", "Phone state listener setup completed successfully")
+            
         } catch (e: Exception) {
-            // Silently fail if phone state detection setup fails
+            android.util.Log.w("RecordingViewModel", "Failed to setup phone state listener - continuing without call detection", e)
+            // Silently fail if phone state detection setup fails - app should still work
         }
     }
     
@@ -441,9 +606,13 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         // Hide any remaining notifications
         notificationHelper.hideRecordingPausedNotification()
         notificationHelper.hideAudioSourceChangeNotification()
+        notificationHelper.hideStorageNotifications()
         
         // Clean up audio device monitoring
         stopAudioDeviceMonitoring()
+        
+        // Clean up storage monitoring
+        stopStorageMonitoring()
     }
 }
 
