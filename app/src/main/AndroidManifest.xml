@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Needed to detect phone calls and pause recording -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Needed to show notifications on Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Only needed on Android 12 and below (for getExternalFilesDir) -->
     <uses-permission

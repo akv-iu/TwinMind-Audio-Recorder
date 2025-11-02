@@ -18,6 +18,7 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     sealed class Status {
         object Stopped : Status()
         object Recording : Status()
+        object Paused : Status()
     }
 
     private val _status = mutableStateOf<Status>(Status.Stopped)
@@ -40,11 +41,21 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     private var currentFile: File? = null
     private var timerJob: Job? = null
     private var startTimeMs = 0L
+    private var pausedTimeMs = 0L
 
     fun toggleRecord() {
         when (_status.value) {
             is Status.Recording -> stopRecording()
             is Status.Stopped -> startRecording()
+            is Status.Paused -> resumeRecording()
+        }
+    }
+    
+    fun togglePause() {
+        when (_status.value) {
+            is Status.Recording -> pauseRecording()
+            is Status.Paused -> resumeRecording()
+            is Status.Stopped -> { /* No action when stopped */ }
         }
     }
 
@@ -63,13 +74,17 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopRecording() {
         timerJob?.cancel()
-        try { recorder.stop() } catch (_: Exception) {}
+        
+        // Only stop recorder if we're currently recording (not if paused)
+        if (_status.value is Status.Recording) {
+            try { recorder.stop() } catch (_: Exception) {}
+        }
 
         _status.value = Status.Stopped
         _timerText.value = "00:00"
 
         currentFile?.takeIf { it.exists() && it.length() > 0 }?.let { file ->
-            val duration = elapsedSeconds()
+            val duration = if (pausedTimeMs > 0) pausedTimeMs / 1000 else elapsedSeconds()
             val item = RecordingItem(
                 file = file,
                 name = file.nameWithoutExtension,
@@ -81,6 +96,42 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
         currentFile = null
         startTimeMs = 0L
+        pausedTimeMs = 0L
+    }
+
+    private fun pauseRecording() {
+        if (_status.value !is Status.Recording) return
+        
+        timerJob?.cancel()
+        try { recorder.stop() } catch (_: Exception) {}
+        
+        // Save how much time has elapsed when we paused
+        pausedTimeMs = System.currentTimeMillis() - startTimeMs
+        _status.value = Status.Paused
+    }
+    
+    private fun resumeRecording() {
+        if (_status.value !is Status.Paused) return
+        
+        // Create a new file for the resumed recording (MediaRecorder doesn't support appending)
+        val file = File(
+            getApplication<Application>().getExternalFilesDir(null),
+            "meeting_${timestamp()}_resumed.m4a"
+        ).also { it.parentFile?.mkdirs() }
+        
+        currentFile = file
+        
+        try {
+            recorder.start(file)
+            _status.value = Status.Recording
+            
+            // Adjust start time to account for paused time
+            startTimeMs = System.currentTimeMillis() - pausedTimeMs
+            startTimer()
+        } catch (e: Exception) {
+            _status.value = Status.Stopped
+            _timerText.value = "00:00"
+        }
     }
 
     fun play(item: RecordingItem) {
@@ -92,9 +143,11 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startTimer() {
-        startTimeMs = System.currentTimeMillis()
+        if (startTimeMs == 0L) {
+            startTimeMs = System.currentTimeMillis()
+        }
         timerJob = viewModelScope.launch(Dispatchers.Main) {
-            while (isActive) {
+            while (isActive && _status.value is Status.Recording) {
                 val secs = elapsedSeconds()
                 _timerText.value = String.format("%02d:%02d", secs / 60, secs % 60)
                 delay(500)

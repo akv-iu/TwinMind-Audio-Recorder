@@ -6,7 +6,9 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PlayArrow
 
 import android.Manifest
+import android.content.Intent
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
@@ -42,14 +45,28 @@ import java.util.*
 
 class MainActivity : ComponentActivity() {
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {}
+    private val multiplePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        // Handle permission results if needed
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        
+        // Request necessary permissions
+        val permissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_PHONE_STATE
+        )
+        
+        // Add notification permission for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        
+        multiplePermissionLauncher.launch(permissions.toTypedArray())
 
         setContent {
             MyApplicationTheme {
@@ -57,6 +74,8 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    
+
 }
 
 @Composable
@@ -65,7 +84,6 @@ fun AudioRecorderApp() {
     val status by viewModel.status
     val timerText by viewModel.timerText
     val recordings by viewModel.recordings
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -88,24 +106,57 @@ fun AudioRecorderApp() {
             modifier = Modifier.padding(bottom = 32.dp)
         )
 
-        // Record Button
+        // Main Record Button
         FloatingActionButton(
             onClick = { viewModel.toggleRecord() },
             modifier = Modifier
                 .size(80.dp)
-                .padding(bottom = 32.dp),
-            containerColor = if (status is RecordingViewModel.Status.Recording) 
-                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                .padding(bottom = 16.dp),
+            containerColor = when (status) {
+                is RecordingViewModel.Status.Recording -> MaterialTheme.colorScheme.error
+                is RecordingViewModel.Status.Paused -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.primary
+            }
         ) {
             Icon(
-                imageVector = if (status is RecordingViewModel.Status.Recording) 
-                    Icons.Default.MicOff else Icons.Default.Mic,
-                contentDescription = if (status is RecordingViewModel.Status.Recording) 
-                    "Stop Recording" else "Start Recording",
+                imageVector = when (status) {
+                    is RecordingViewModel.Status.Recording -> Icons.Default.MicOff
+                    is RecordingViewModel.Status.Paused -> Icons.Default.PlayArrow
+                    else -> Icons.Default.Mic
+                },
+                contentDescription = when (status) {
+                    is RecordingViewModel.Status.Recording -> "Stop Recording"
+                    is RecordingViewModel.Status.Paused -> "Resume Recording"
+                    else -> "Start Recording"
+                },
                 modifier = Modifier.size(32.dp),
                 tint = Color.White
             )
         }
+
+        // Pause/Resume Button (only show when recording or paused)
+        if (status is RecordingViewModel.Status.Recording || status is RecordingViewModel.Status.Paused) {
+            FloatingActionButton(
+                onClick = { viewModel.togglePause() },
+                modifier = Modifier
+                    .size(60.dp)
+                    .padding(bottom = 32.dp),
+                containerColor = MaterialTheme.colorScheme.secondary
+            ) {
+                Icon(
+                    imageVector = if (status is RecordingViewModel.Status.Recording) 
+                        Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (status is RecordingViewModel.Status.Recording) 
+                        "Pause Recording" else "Resume Recording",
+                    modifier = Modifier.size(24.dp),
+                    tint = Color.White
+                )
+            }
+        } else {
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+
+
 
         // Recordings List
         if (recordings.isNotEmpty()) {

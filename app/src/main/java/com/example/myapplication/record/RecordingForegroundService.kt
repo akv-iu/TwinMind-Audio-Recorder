@@ -6,11 +6,19 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
+import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.Executor
 import kotlinx.coroutines.*
 import java.io.File
 import java.text.SimpleDateFormat
@@ -29,11 +37,13 @@ class RecordingForegroundService : Service() {
     companion object {
         const val ACTION_START = "com.example.myapplication.action.START_RECORDING"
         const val ACTION_STOP = "com.example.myapplication.action.STOP_RECORDING"
+        const val ACTION_TEST_PAUSE = "com.example.myapplication.action.TEST_PAUSE"
 
         private const val NOTIF_CHANNEL_ID = "recording_service_channel"
         private const val NOTIF_CHANNEL_NAME = "Recording"
         private const val NOTIF_ID = 1001
         private const val CHUNK_MILLIS = 30_000L
+        private const val TAG = "RecordingService"
     }
 
     private val recorder by lazy { AndroidAudioRecorder(this) }
@@ -45,6 +55,8 @@ class RecordingForegroundService : Service() {
     
     private var telephonyManager: TelephonyManager? = null
     private var phoneStateListener: PhoneStateListener? = null
+    private var telephonyCallback: Any? = null // TelephonyCallback for Android 12+
+    private var callbackExecutor: Executor? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -55,11 +67,25 @@ class RecordingForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand called with action: ${intent?.action}")
+        
         when (intent?.action) {
             ACTION_START -> startForegroundAndRecord()
             ACTION_STOP -> stopRecordingAndStopSelf()
+            ACTION_TEST_PAUSE -> {
+                Log.d(TAG, "Test pause requested")
+                pauseRecordingForCall()
+                // Auto-resume after 5 seconds for testing
+                scope.launch {
+                    delay(5000)
+                    if (isPausedForCall.getAndSet(false)) {
+                        updateNotificationText("Recording — chunk ${chunkIndex + 1}")
+                        Log.d(TAG, "Test pause completed, resumed recording")
+                    }
+                }
+            }
             else -> {
-                // no-op
+                Log.d(TAG, "Unknown action: ${intent?.action}")
             }
         }
 
@@ -68,32 +94,42 @@ class RecordingForegroundService : Service() {
     }
 
     private fun startForegroundAndRecord() {
-        if (isRecording.getAndSet(true)) return
+        if (isRecording.getAndSet(true)) {
+            Log.d(TAG, "Already recording, ignoring start request")
+            return
+        }
 
+        Log.d(TAG, "Starting foreground recording service")
         val notif = buildNotification("Recording — chunk ${chunkIndex + 1}")
         startForeground(NOTIF_ID, notif)
 
         recordingJob = scope.launch {
             try {
                 val dir = File(getExternalFilesDir(null), "recordings").apply { if (!exists()) mkdirs() }
+                Log.d(TAG, "Recording directory: ${dir.absolutePath}")
 
                 while (isActive && isRecording.get()) {
                     // Wait while paused for phone call
                     while (isPausedForCall.get() && isActive && isRecording.get()) {
+                        Log.d(TAG, "Waiting while paused for phone call")
                         delay(1000L)
                     }
                     
                     // If we're no longer recording, exit the loop
-                    if (!isRecording.get()) break
+                    if (!isRecording.get()) {
+                        Log.d(TAG, "Recording stopped, exiting loop")
+                        break
+                    }
                     
                     val file = File(dir, "meeting_${timestamp()}_${chunkIndex}.m4a")
                     chunkIndex += 1
+                    Log.d(TAG, "Starting chunk $chunkIndex: ${file.name}")
 
                     try {
                         recorder.start(file)
+                        Log.d(TAG, "Recorder started for chunk $chunkIndex")
                     } catch (e: Exception) {
-                        // if start fails, break the loop and stop service
-                        e.printStackTrace()
+                        Log.e(TAG, "Failed to start recorder for chunk $chunkIndex", e)
                         break
                     }
 
@@ -104,14 +140,22 @@ class RecordingForegroundService : Service() {
                         waited += 1000L
                     }
 
-                    try { recorder.stop() } catch (t: Throwable) { t.printStackTrace() }
+                    try { 
+                        recorder.stop()
+                        Log.d(TAG, "Recorder stopped for chunk $chunkIndex")
+                    } catch (t: Throwable) { 
+                        Log.e(TAG, "Failed to stop recorder for chunk $chunkIndex", t)
+                    }
 
                     // update notification with new chunk index (if not paused)
                     if (!isPausedForCall.get()) {
                         updateNotificationText("Recording — chunk ${chunkIndex + 1}")
+                    } else {
+                        Log.d(TAG, "Chunk $chunkIndex completed but paused for call")
                     }
                 }
             } finally {
+                Log.d(TAG, "Recording loop ended, cleaning up")
                 // ensure recorder stopped
                 try { recorder.stop() } catch (_: Exception) {}
                 isRecording.set(false)
@@ -122,10 +166,19 @@ class RecordingForegroundService : Service() {
     }
 
     private fun stopRecordingAndStopSelf() {
-        if (!isRecording.getAndSet(false)) return
+        if (!isRecording.getAndSet(false)) {
+            Log.d(TAG, "Already stopped, ignoring stop request")
+            return
+        }
 
+        Log.d(TAG, "Stopping recording service")
         recordingJob?.cancel()
-        try { recorder.stop() } catch (_: Exception) {}
+        try { 
+            recorder.stop()
+            Log.d(TAG, "Recorder stopped successfully")
+        } catch (e: Exception) { 
+            Log.e(TAG, "Failed to stop recorder", e)
+        }
         stopForeground(true)
         stopSelf()
     }
@@ -155,32 +208,102 @@ class RecordingForegroundService : Service() {
             .build()
 
     private fun setupPhoneStateListener() {
+        // Check if we have the required permission
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "READ_PHONE_STATE permission not granted - cannot detect phone calls")
+            return
+        }
+
         try {
             telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            phoneStateListener = object : PhoneStateListener() {
-                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    when (state) {
-                        TelephonyManager.CALL_STATE_IDLE -> {
-                            // Call ended - resume recording if we were paused
-                            if (isPausedForCall.getAndSet(false)) {
-                                updateNotificationText("Recording — chunk ${chunkIndex + 1}")
-                            }
-                        }
-                        TelephonyManager.CALL_STATE_RINGING, 
-                        TelephonyManager.CALL_STATE_OFFHOOK -> {
-                            // Call starting - pause recording
-                            if (isRecording.get()) {
-                                isPausedForCall.set(true)
-                                try { recorder.stop() } catch (_: Exception) {}
-                                updateNotificationText("Paused - Phone call")
-                            }
-                        }
-                    }
+            Log.d(TAG, "Setting up phone state listener, Android API: ${Build.VERSION.SDK_INT}")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Android 12+ - use TelephonyCallback
+                setupModernCallCallback()
+            } else {
+                // Android 11 and below - use PhoneStateListener
+                setupLegacyPhoneStateListener()
+            }
+            
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Security exception setting up phone state listener", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to setup phone state listener", e)
+        }
+    }
+    
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.S)
+    private fun setupModernCallCallback() {
+        callbackExecutor = Executor { command ->
+            Handler(Looper.getMainLooper()).post(command)
+        }
+        
+        val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+            override fun onCallStateChanged(state: Int) {
+                handleCallStateChange(state)
+            }
+        }
+        
+        try {
+            telephonyManager?.registerTelephonyCallback(callbackExecutor!!, callback)
+            telephonyCallback = callback
+            Log.d(TAG, "Modern TelephonyCallback registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register TelephonyCallback", e)
+        }
+    }
+    
+    @Suppress("DEPRECATION")
+    private fun setupLegacyPhoneStateListener() {
+        phoneStateListener = object : PhoneStateListener() {
+            override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                handleCallStateChange(state)
+            }
+        }
+        
+        try {
+            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+            Log.d(TAG, "Legacy PhoneStateListener registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register PhoneStateListener", e)
+        }
+    }
+    
+    private fun handleCallStateChange(state: Int) {
+        Log.d(TAG, "Call state changed: $state, isRecording: ${isRecording.get()}")
+        
+        when (state) {
+            TelephonyManager.CALL_STATE_IDLE -> {
+                Log.d(TAG, "Call ended - checking if paused: ${isPausedForCall.get()}")
+                // Call ended - resume recording if we were paused
+                if (isPausedForCall.getAndSet(false)) {
+                    Log.d(TAG, "Resuming recording after call")
+                    updateNotificationText("Recording — chunk ${chunkIndex + 1}")
                 }
             }
-            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
-        } catch (e: SecurityException) {
-            // Phone state permission not granted - continue without call detection
+            TelephonyManager.CALL_STATE_RINGING -> {
+                Log.d(TAG, "Phone ringing - pausing recording")
+                pauseRecordingForCall()
+            }
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                Log.d(TAG, "Call in progress - pausing recording")
+                pauseRecordingForCall()
+            }
+        }
+    }
+    
+    private fun pauseRecordingForCall() {
+        if (isRecording.get()) {
+            Log.d(TAG, "Pausing recording for phone call")
+            isPausedForCall.set(true)
+            try { 
+                recorder.stop()
+                Log.d(TAG, "Recorder stopped for call")
+            } catch (e: Exception) { 
+                Log.e(TAG, "Failed to stop recorder for call", e)
+            }
+            updateNotificationText("Paused - Phone call")
         }
     }
 
@@ -194,8 +317,15 @@ class RecordingForegroundService : Service() {
     }
     
     private fun updateNotificationText(text: String) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(text))
+        try {
+            Log.d(TAG, "Updating notification: $text")
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notification = buildNotification(text)
+            nm.notify(NOTIF_ID, notification)
+            Log.d(TAG, "Notification updated successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update notification", e)
+        }
     }
 
     private fun timestamp(): String =
@@ -203,12 +333,19 @@ class RecordingForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "Service being destroyed, cleaning up")
         
-        // Clean up phone state listener
-        phoneStateListener?.let { listener ->
-            try {
-                telephonyManager?.listen(listener, PhoneStateListener.LISTEN_NONE)
-            } catch (_: Exception) {}
+        // Clean up phone state listeners
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && telephonyCallback != null) {
+                telephonyManager?.unregisterTelephonyCallback(telephonyCallback as TelephonyCallback)
+                Log.d(TAG, "TelephonyCallback unregistered")
+            } else if (phoneStateListener != null) {
+                telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
+                Log.d(TAG, "PhoneStateListener unregistered")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up phone state listener", e)
         }
         
         recordingJob?.cancel()
