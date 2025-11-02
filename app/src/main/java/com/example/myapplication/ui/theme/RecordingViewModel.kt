@@ -21,6 +21,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executor
+import com.example.myapplication.audio.AudioDeviceManager
 
 class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -68,6 +69,11 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     
     // Notification helper
     private val notificationHelper = NotificationHelper(app)
+    
+    // Audio device management
+    private var audioDeviceManager: AudioDeviceManager? = null
+    private var currentAudioDevice = AudioDeviceManager.AudioDeviceType.DEVICE_MIC
+    private var currentDeviceName = "Device Microphone"
 
     fun toggleRecord() {
         when (_status.value) {
@@ -92,10 +98,16 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         ).also { it.parentFile?.mkdirs() }
 
         currentFile = file
-        recorder.start(file)
+        
+        // Get optimal audio source for current device
+        val audioSource = recorder.getOptimalAudioSource(currentAudioDevice)
+        recorder.start(file, audioSource)
 
         _status.value = Status.Recording
         startTimer()
+        
+        // Start monitoring audio device changes
+        startAudioDeviceMonitoring()
     }
 
     fun stopRecording() {
@@ -128,6 +140,114 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         currentFile = null
         startTimeMs = 0L
         pausedTimeMs = 0L
+        
+        // Stop monitoring audio device changes
+        stopAudioDeviceMonitoring()
+    }
+
+    /**
+     * Start monitoring audio device changes
+     */
+    private fun startAudioDeviceMonitoring() {
+        android.util.Log.d("RecordingViewModel", "Starting audio device monitoring")
+        
+        if (audioDeviceManager == null) {
+            audioDeviceManager = AudioDeviceManager(getApplication()) { deviceType, deviceName ->
+                handleAudioDeviceChange(deviceType, deviceName)
+            }
+        }
+        audioDeviceManager?.startMonitoring()
+        
+        // Get initial device state
+        val (initialDevice, initialName) = audioDeviceManager?.getCurrentDevice() 
+            ?: Pair(AudioDeviceManager.AudioDeviceType.DEVICE_MIC, "Device Microphone")
+        
+        currentAudioDevice = initialDevice
+        currentDeviceName = initialName
+        
+        android.util.Log.d("RecordingViewModel", "Initial audio device: $initialName ($initialDevice)")
+    }
+    
+    /**
+     * Manual method to test audio device detection (for debugging)
+     */
+    fun testAudioDeviceDetection() {
+        android.util.Log.d("RecordingViewModel", "=== MANUAL AUDIO DEVICE TEST ===")
+        audioDeviceManager?.forceDeviceDetection()
+    }
+    
+    /**
+     * Stop monitoring audio device changes
+     */
+    private fun stopAudioDeviceMonitoring() {
+        audioDeviceManager?.stopMonitoring()
+    }
+    
+    /**
+     * Handle audio device changes during recording
+     */
+    private fun handleAudioDeviceChange(newDeviceType: AudioDeviceManager.AudioDeviceType, newDeviceName: String) {
+        val isRecording = _status.value is Status.Recording
+        
+        android.util.Log.d("RecordingViewModel", 
+            "Audio device changed: $currentDeviceName ($currentAudioDevice) -> $newDeviceName ($newDeviceType), isRecording=$isRecording")
+        
+        // Update current device info
+        val oldDeviceType = currentAudioDevice
+        val oldDeviceName = currentDeviceName
+        currentAudioDevice = newDeviceType
+        currentDeviceName = newDeviceName
+        
+        // Show notification about device change
+        notificationHelper.showAudioSourceChangeNotification(newDeviceName, isRecording)
+        
+        // If currently recording, attempt to switch audio source
+        if (isRecording) {
+            android.util.Log.d("RecordingViewModel", "Currently recording - attempting audio source switch")
+            switchRecordingAudioSource(newDeviceType)
+        } else {
+            android.util.Log.d("RecordingViewModel", "Not currently recording - just updating device info")
+        }
+    }
+    
+    /**
+     * Switch audio source during active recording
+     */
+    private fun switchRecordingAudioSource(deviceType: AudioDeviceManager.AudioDeviceType) {
+        try {
+            val newAudioSource = recorder.getOptimalAudioSource(deviceType)
+            val currentSource = recorder.getCurrentAudioSource()
+            
+            android.util.Log.d("RecordingViewModel", 
+                "Switching audio source: currentSource=$currentSource, newAudioSource=$newAudioSource, deviceType=$deviceType")
+            
+            if (newAudioSource != currentSource) {
+                android.util.Log.d("RecordingViewModel", "Audio sources differ - attempting switch")
+                
+                // Note: MediaRecorder requires restart to change source
+                // This is a limitation - we can't seamlessly switch without brief interruption
+                val success = recorder.switchAudioSource(newAudioSource)
+                
+                android.util.Log.d("RecordingViewModel", "Audio source switch result: $success")
+                
+                if (success) {
+                    // Successfully switched - continue recording with new source
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(100) // Brief delay for stabilization
+                        // Auto-hide notification after a few seconds
+                        kotlinx.coroutines.delay(3000)
+                        notificationHelper.hideAudioSourceChangeNotification()
+                    }
+                } else {
+                    android.util.Log.w("RecordingViewModel", "Failed to switch audio source")
+                }
+            } else {
+                android.util.Log.d("RecordingViewModel", "Audio sources are the same - no switch needed")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error switching audio source", e)
+            // If switching fails, continue with current source
+        }
     }
 
     private fun pauseRecording() {
@@ -320,6 +440,10 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Hide any remaining notifications
         notificationHelper.hideRecordingPausedNotification()
+        notificationHelper.hideAudioSourceChangeNotification()
+        
+        // Clean up audio device monitoring
+        stopAudioDeviceMonitoring()
     }
 }
 

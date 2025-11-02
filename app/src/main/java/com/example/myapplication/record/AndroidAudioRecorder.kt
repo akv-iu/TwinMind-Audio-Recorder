@@ -3,6 +3,8 @@ package com.example.myapplication.record
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Log
+import com.example.myapplication.audio.AudioDeviceManager
 import java.io.File
 import java.io.FileOutputStream
 
@@ -11,7 +13,13 @@ class AndroidAudioRecorder(
     private val context: Context
 ) : AudioRecorder {
 
+    companion object {
+        private const val TAG = "AndroidAudioRecorder"
+    }
+
     private var recorder: MediaRecorder? = null
+    private var currentOutputFile: File? = null
+    private var currentAudioSource: Int = MediaRecorder.AudioSource.MIC
 
     private fun createRecorder(): MediaRecorder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -22,8 +30,15 @@ class AndroidAudioRecorder(
         }
 
     override fun start(outputFile: File) {
+        start(outputFile, MediaRecorder.AudioSource.MIC)
+    }
+    
+    fun start(outputFile: File, audioSource: Int) {
+        currentOutputFile = outputFile
+        currentAudioSource = audioSource
+        
         createRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setAudioSource(audioSource)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             setOutputFile(FileOutputStream(outputFile).fd)
@@ -33,6 +48,8 @@ class AndroidAudioRecorder(
 
             recorder = this
         }
+        
+        Log.d(TAG, "Recording started with audio source: ${getAudioSourceName(audioSource)}")
     }
 
     override fun stop() {
@@ -41,17 +58,98 @@ class AndroidAudioRecorder(
             release()
         }
         recorder = null
+        currentOutputFile = null
+        Log.d(TAG, "Recording stopped")
     }
 
     fun pause() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             recorder?.pause()
+            Log.d(TAG, "Recording paused")
         }
     }
 
     fun resume() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             recorder?.resume()
+            Log.d(TAG, "Recording resumed")
         }
     }
+    
+    /**
+     * Switch audio source during recording (requires restart of MediaRecorder)
+     * This is a limitation of MediaRecorder - cannot change source without restarting
+     */
+    fun switchAudioSource(newAudioSource: Int): Boolean {
+        val outputFile = currentOutputFile ?: return false
+        
+        return try {
+            val wasRecording = recorder != null
+            
+            if (wasRecording) {
+                // Save current position and pause
+                val wasPaused = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+                if (wasPaused) {
+                    pause()
+                }
+                
+                // Stop current recorder
+                stop()
+                
+                // Start with new audio source
+                start(outputFile, newAudioSource)
+                
+                Log.d(TAG, "Audio source switched to: ${getAudioSourceName(newAudioSource)}")
+                true
+            } else {
+                // Just update the audio source for next recording
+                currentAudioSource = newAudioSource
+                Log.d(TAG, "Audio source updated to: ${getAudioSourceName(newAudioSource)}")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error switching audio source", e)
+            false
+        }
+    }
+    
+    /**
+     * Get optimal audio source for device type
+     */
+    fun getOptimalAudioSource(deviceType: AudioDeviceManager.AudioDeviceType): Int {
+        return when (deviceType) {
+            AudioDeviceManager.AudioDeviceType.BLUETOOTH_HEADSET -> {
+                // Use unprocessed source for Bluetooth if available, otherwise default
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    MediaRecorder.AudioSource.UNPROCESSED
+                } else {
+                    MediaRecorder.AudioSource.MIC
+                }
+            }
+            AudioDeviceManager.AudioDeviceType.WIRED_HEADSET -> {
+                MediaRecorder.AudioSource.MIC
+            }
+            AudioDeviceManager.AudioDeviceType.USB_HEADSET -> {
+                MediaRecorder.AudioSource.MIC
+            }
+            AudioDeviceManager.AudioDeviceType.DEVICE_MIC -> {
+                MediaRecorder.AudioSource.MIC
+            }
+        }
+    }
+    
+    private fun getAudioSourceName(audioSource: Int): String {
+        return when (audioSource) {
+            MediaRecorder.AudioSource.MIC -> "MIC"
+            MediaRecorder.AudioSource.UNPROCESSED -> "UNPROCESSED"
+            MediaRecorder.AudioSource.CAMCORDER -> "CAMCORDER"
+            MediaRecorder.AudioSource.VOICE_RECOGNITION -> "VOICE_RECOGNITION"
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION -> "VOICE_COMMUNICATION"
+            else -> "UNKNOWN($audioSource)"
+        }
+    }
+    
+    fun getCurrentAudioSource(): Int = currentAudioSource
+    
+    fun isRecording(): Boolean = recorder != null
 }
