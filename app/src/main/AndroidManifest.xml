@@ -3,6 +3,10 @@
 
     <!-- Required for recording -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Needed to run a foreground service that records audio -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Needed to detect phone calls and pause recording -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- Only needed on Android 12 and below (for getExternalFilesDir) -->
     <uses-permission
@@ -11,6 +15,13 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"
@@ -31,6 +42,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service to record audio in chunks -->
+        <service
+            android:name=".record.RecordingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
     </application>
 

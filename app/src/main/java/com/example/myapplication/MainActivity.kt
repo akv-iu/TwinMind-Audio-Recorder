@@ -1,26 +1,41 @@
 package com.example.myapplication
 
+
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PlayArrow
+
 import android.Manifest
+import android.media.MediaPlayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateBounds
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.myapplication.ui.RecordingViewModel
-import com.example.myapplication.ui.RecordingItem  // Import from ui package
+import com.example.myapplication.ui.theme.RecordingViewModel
+import com.example.myapplication.ui.theme.RecordingItem
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import java.text.SimpleDateFormat
 import java.util.*
@@ -38,89 +53,76 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                RecordingScreen()
+                AudioRecorderApp()
             }
         }
     }
 }
 
 @Composable
-fun RecordingScreen(vm: RecordingViewModel = viewModel()) {
-    val status by vm.status
-    val timer by vm.timerText
-    val recordings by vm.recordings
+fun AudioRecorderApp() {
+    val viewModel: RecordingViewModel = viewModel()
+    val status by viewModel.status
+    val timerText by viewModel.timerText
+    val recordings by viewModel.recordings
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Header
+        Text(
+            text = "TwinMind Audio Recorder",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(vertical = 32.dp)
+        )
 
-        // ───── RECORD / STOP BUTTON ─────
-        Button(
-            onClick = { vm.toggleRecord() },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (status is RecordingViewModel.Status.Recording)
-                    MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            ),
+        // Timer Display
+        Text(
+            text = timerText,
+            style = MaterialTheme.typography.displayMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 32.dp)
+        )
+
+        // Record Button
+        FloatingActionButton(
+            onClick = { viewModel.toggleRecord() },
             modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .height(56.dp)
+                .size(80.dp)
+                .padding(bottom = 32.dp),
+            containerColor = if (status is RecordingViewModel.Status.Recording) 
+                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
         ) {
-            Text(
-                text = if (status is RecordingViewModel.Status.Recording) "Stop" else "Record",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
+            Icon(
+                imageVector = if (status is RecordingViewModel.Status.Recording) 
+                    Icons.Default.MicOff else Icons.Default.Mic,
+                contentDescription = if (status is RecordingViewModel.Status.Recording) 
+                    "Stop Recording" else "Start Recording",
+                modifier = Modifier.size(32.dp),
+                tint = Color.White
             )
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // ───── TIMER ─────
-        Text(
-            text = timer,
-            fontSize = 56.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // ───── STATUS ─────
-        val (statusText, statusColor) = when (status) {
-            is RecordingViewModel.Status.Recording -> "Recording..." to Color(0xFF4CAF50)
-            else -> "Stopped" to Color.Gray
-        }
-        Text(
-            text = statusText,
-            color = statusColor,
-            fontSize = 16.sp
-        )
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        // ───── DASHBOARD ─────
-        Text(
-            text = "Meeting History",
-            style = MaterialTheme.typography.titleLarge
-        )
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-        if (recordings.isEmpty()) {
+        // Recordings List
+        if (recordings.isNotEmpty()) {
             Text(
-                "No recordings yet",
-                color = Color.Gray,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-        } else {
-            LazyColumn(
+                text = "Recordings",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Medium,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .padding(bottom = 16.dp)
+            )
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(recordings) { item ->
-                    RecordingRow(item) { vm.play(item) }
+                items(recordings) { recording ->
+                    RecordingCard(item = recording, viewModel = viewModel)
                 }
             }
         }
@@ -128,39 +130,76 @@ fun RecordingScreen(vm: RecordingViewModel = viewModel()) {
 }
 
 @Composable
-fun RecordingRow(item: RecordingItem, onPlay: () -> Unit) {
+fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel) {
+    var isPlaying by remember { mutableStateOf(false) }
+
     Card(
-        onClick = onPlay,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(text = item.name, fontWeight = FontWeight.Medium)
-                val fmt = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+            IconButton(
+                onClick = {
+                    if (isPlaying) {
+                        viewModel.stopPlayback()
+                        isPlaying = false
+                    } else {
+                        viewModel.play(item)
+                        isPlaying = true
+                    }
+                },
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play",
+                    tint = if (isPlaying) MaterialTheme.colorScheme.primary else Color.Gray,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            Spacer(Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "${fmt.format(item.date)} • ${formatDuration(item.durationSec)}",
-                    fontSize = 12.sp,
+                    text = item.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.height(4.dp))
+                val timeFmt = SimpleDateFormat("hh:mm a", Locale.getDefault())
+                val duration = formatDuration(item.durationSec)
+                Text(
+                    text = "${timeFmt.format(item.date)} · $duration",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray
                 )
             }
         }
     }
+
+    // Auto-stop UI when playback ends
+    DisposableEffect(item.file) {
+        val listener = MediaPlayer.OnCompletionListener {
+            isPlaying = false
+        }
+        viewModel.player.setOnCompletionListener(listener)  // ← now resolved
+
+        onDispose {
+            viewModel.player.setOnCompletionListener(null)
+        }
+    }
 }
+
 
 private fun formatDuration(sec: Long): String {
     val m = sec / 60
     val s = sec % 60
-    return String.format("%02d:%02d", m, s)
+    return if (m > 0) "${m}m ${s}s" else "${s}s"
 }

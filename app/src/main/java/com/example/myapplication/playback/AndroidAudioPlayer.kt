@@ -1,3 +1,4 @@
+// playback/AndroidAudioPlayer.kt
 package com.example.myapplication.playback
 
 import android.content.Context
@@ -5,28 +6,24 @@ import android.media.MediaPlayer
 import java.io.File
 
 class AndroidAudioPlayer(private val context: Context) {
-    private var player: MediaPlayer? = null
+    private var mediaPlayer: MediaPlayer? = null
 
-    fun playFile(file: File, onCompletion: () -> Unit = {}) {
+    fun playFile(file: File) {
         stop()
-        player = MediaPlayer().apply {
+        mediaPlayer = MediaPlayer().apply {
             setDataSource(file.absolutePath)
-            setOnCompletionListener {
-                onCompletion()
-                releasePlayer()
-            }
             prepare()
             start()
         }
     }
 
     fun stop() {
-        player?.stop()
-        releasePlayer()
+        mediaPlayer?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
     }
 
-    private fun releasePlayer() {
-        player?.release()
-        player = null
+    fun setOnCompletionListener(listener: MediaPlayer.OnCompletionListener?) {
+        mediaPlayer?.setOnCompletionListener(listener)
     }
 }

@@ -1,13 +1,13 @@
-// ui/RecordingViewModel.kt
-package com.example.myapplication.ui
+// File: ui/theme/RecordingViewModel.kt
+package com.example.myapplication.ui.theme
 
 import android.app.Application
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.myapplication.record.AndroidAudioRecorder
 import com.example.myapplication.playback.AndroidAudioPlayer
+import com.example.myapplication.record.AndroidAudioRecorder
 import kotlinx.coroutines.*
 import java.io.File
 import java.text.SimpleDateFormat
@@ -20,7 +20,6 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         object Recording : Status()
     }
 
-    // Public read-only State
     private val _status = mutableStateOf<Status>(Status.Stopped)
     val status: State<Status> = _status
 
@@ -30,9 +29,14 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     private val _recordings = mutableStateOf<List<RecordingItem>>(emptyList())
     val recordings: State<List<RecordingItem>> = _recordings
 
-    // Internals
+    // SINGLE PLAYER INSTANCE — shared everywhere
+    private val audioPlayer = AndroidAudioPlayer(app)
+    
+    // Expose player for completion listener access
+    val player: AndroidAudioPlayer get() = audioPlayer
+
     private val recorder = AndroidAudioRecorder(app)
-    private val player = AndroidAudioPlayer(app)
+
     private var currentFile: File? = null
     private var timerJob: Job? = null
     private var startTimeMs = 0L
@@ -66,7 +70,12 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
         currentFile?.takeIf { it.exists() && it.length() > 0 }?.let { file ->
             val duration = elapsedSeconds()
-            val item = RecordingItem(file, file.nameWithoutExtension, Date(), duration)
+            val item = RecordingItem(
+                file = file,
+                name = file.nameWithoutExtension,
+                date = Date(),
+                durationSec = duration
+            )
             _recordings.value = _recordings.value + item
         }
 
@@ -74,7 +83,13 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         startTimeMs = 0L
     }
 
-    fun play(item: RecordingItem) = player.playFile(item.file)
+    fun play(item: RecordingItem) {
+        audioPlayer.playFile(item.file)
+    }
+
+    fun stopPlayback() {
+        audioPlayer.stop()
+    }
 
     private fun startTimer() {
         startTimeMs = System.currentTimeMillis()
