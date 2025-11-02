@@ -42,4 +42,16 @@ class AndroidAudioRecorder(
         }
         recorder = null
     }
+
+    fun pause() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            recorder?.pause()
+        }
+    }
+
+    fun resume() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            recorder?.resume()
+        }
+    }
 }
