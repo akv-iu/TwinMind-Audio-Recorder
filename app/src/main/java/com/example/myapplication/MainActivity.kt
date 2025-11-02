@@ -6,7 +6,6 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PlayArrow
 
 import android.Manifest
-import android.content.Intent
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateBounds
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -84,6 +84,7 @@ fun AudioRecorderApp() {
     val status by viewModel.status
     val timerText by viewModel.timerText
     val recordings by viewModel.recordings
+    val currentlyPlayingItem by viewModel.currentlyPlayingItem
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -173,7 +174,11 @@ fun AudioRecorderApp() {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(recordings) { recording ->
-                    RecordingCard(item = recording, viewModel = viewModel)
+                    RecordingCard(
+                        item = recording, 
+                        viewModel = viewModel,
+                        isCurrentlyPlaying = currentlyPlayingItem == recording
+                    )
                 }
             }
         }
@@ -181,12 +186,18 @@ fun AudioRecorderApp() {
 }
 
 @Composable
-fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel) {
-    var isPlaying by remember { mutableStateOf(false) }
-
+fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel, isCurrentlyPlaying: Boolean = false) {
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCurrentlyPlaying) 
+                MaterialTheme.colorScheme.primaryContainer 
+            else 
+                Color(0xFFF8FAFC)
+        ),
+        border = if (isCurrentlyPlaying) 
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        else null,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -197,20 +208,18 @@ fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel) {
         ) {
             IconButton(
                 onClick = {
-                    if (isPlaying) {
+                    if (isCurrentlyPlaying) {
                         viewModel.stopPlayback()
-                        isPlaying = false
                     } else {
                         viewModel.play(item)
-                        isPlaying = true
                     }
                 },
                 modifier = Modifier.size(48.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = if (isPlaying) MaterialTheme.colorScheme.primary else Color.Gray,
+                    imageVector = if (isCurrentlyPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isCurrentlyPlaying) "Pause" else "Play",
+                    tint = if (isCurrentlyPlaying) MaterialTheme.colorScheme.primary else Color.Gray,
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -221,7 +230,8 @@ fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel) {
                 Text(
                     text = item.name,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = if (isCurrentlyPlaying) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isCurrentlyPlaying) MaterialTheme.colorScheme.primary else Color.Unspecified
                 )
                 Spacer(Modifier.height(4.dp))
                 val timeFmt = SimpleDateFormat("hh:mm a", Locale.getDefault())
@@ -229,21 +239,9 @@ fun RecordingCard(item: RecordingItem, viewModel: RecordingViewModel) {
                 Text(
                     text = "${timeFmt.format(item.date)} · $duration",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray
+                    color = if (isCurrentlyPlaying) MaterialTheme.colorScheme.onPrimaryContainer else Color.Gray
                 )
             }
-        }
-    }
-
-    // Auto-stop UI when playback ends
-    DisposableEffect(item.file) {
-        val listener = MediaPlayer.OnCompletionListener {
-            isPlaying = false
-        }
-        viewModel.player.setOnCompletionListener(listener)  // ← now resolved
-
-        onDispose {
-            viewModel.player.setOnCompletionListener(null)
         }
     }
 }
