@@ -108,6 +108,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     
     // Storage management
     private val storageManager = StorageManager(app)
+    
+    // Silence detection state
+    private var isShowingSilenceWarning = false
 
     fun toggleRecord() {
         when (_status.value) {
@@ -140,6 +143,11 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         ).also { it.parentFile?.mkdirs() }
 
         currentFile = file
+        
+        // Set up silence detection callback before starting
+        recorder.setSilenceDetectionCallback { silenceDurationSeconds ->
+            handleSilenceDetected(silenceDurationSeconds)
+        }
         
         // Get optimal audio source for current device
         val audioSource = recorder.getOptimalAudioSource(currentAudioDevice)
@@ -182,6 +190,12 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         if (isPausedForCall) {
             isPausedForCall = false
             notificationHelper.hideRecordingPausedNotification()
+        }
+        
+        // Hide silence warning if showing
+        if (isShowingSilenceWarning) {
+            isShowingSilenceWarning = false
+            notificationHelper.hideSilenceWarningNotification()
         }
 
         currentFile = null
@@ -613,6 +627,70 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Clean up storage monitoring
         stopStorageMonitoring()
+        
+        // Hide silence warning notifications
+        notificationHelper.hideSilenceWarningNotification()
+    }
+    
+    /**
+     * Handle silence detection callback from recorder
+     */
+    private fun handleSilenceDetected(silenceDurationSeconds: Int) {
+        android.util.Log.w("RecordingViewModel", 
+            "Silence detected for ${silenceDurationSeconds} seconds during recording")
+        
+        // Only show notification if not already showing and currently recording
+        if (!isShowingSilenceWarning && _status.value is Status.Recording) {
+            isShowingSilenceWarning = true
+            notificationHelper.showSilenceWarningNotification(silenceDurationSeconds)
+            
+            // Auto-hide notification after 10 seconds to avoid spam
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(10000)
+                if (isShowingSilenceWarning) {
+                    isShowingSilenceWarning = false
+                    notificationHelper.hideSilenceWarningNotification()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Manually check microphone and reset silence counter
+     * Useful for testing or when user wants to check if mic is working
+     */
+    fun checkMicrophone() {
+        android.util.Log.d("RecordingViewModel", "Manual microphone check requested")
+        
+        // Reset silence counter in recorder
+        recorder.resetSilenceCounter()
+        
+        // Hide any existing silence warning
+        if (isShowingSilenceWarning) {
+            isShowingSilenceWarning = false
+            notificationHelper.hideSilenceWarningNotification()
+        }
+        
+        // Log current silence status for debugging
+        val currentSilenceDuration = recorder.getCurrentSilenceDuration()
+        val isCurrentlySilent = recorder.isCurrentlySilent()
+        
+        android.util.Log.d("RecordingViewModel", 
+            "Microphone check - Silence duration: ${currentSilenceDuration}s, Currently silent: $isCurrentlySilent")
+    }
+    
+    /**
+     * Get current silence detection status for UI display
+     */
+    fun getSilenceStatus(): String {
+        if (!recorder.isRecording()) return "Not recording"
+        
+        val silenceDuration = recorder.getCurrentSilenceDuration()
+        return if (silenceDuration > 0) {
+            "Silent for ${silenceDuration}s"
+        } else {
+            "Audio detected"
+        }
     }
 }
 

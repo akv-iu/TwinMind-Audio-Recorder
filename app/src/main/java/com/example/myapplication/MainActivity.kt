@@ -42,6 +42,7 @@ import com.example.myapplication.ui.theme.RecordingItem
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import java.text.SimpleDateFormat
 import java.util.*
+import android.content.Intent
 
 class MainActivity : ComponentActivity() {
 
@@ -97,6 +98,14 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Important: update the activity's intent
+        android.util.Log.d("MainActivity", "onNewIntent called - bringing app to foreground")
+        
+        // Handle any specific intent actions if needed in the future
+        // For now, just bringing the app to foreground is sufficient
+    }
 
 }
 

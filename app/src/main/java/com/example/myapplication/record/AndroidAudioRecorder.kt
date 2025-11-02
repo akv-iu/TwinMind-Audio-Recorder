@@ -5,6 +5,7 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 import com.example.myapplication.audio.AudioDeviceManager
+import com.example.myapplication.audio.SilenceDetector
 import java.io.File
 import java.io.FileOutputStream
 
@@ -20,6 +21,10 @@ class AndroidAudioRecorder(
     private var recorder: MediaRecorder? = null
     private var currentOutputFile: File? = null
     private var currentAudioSource: Int = MediaRecorder.AudioSource.MIC
+    
+    // Silence detection
+    private var silenceDetector: SilenceDetector? = null
+    private var onSilenceDetected: ((Int) -> Unit)? = null
 
     private fun createRecorder(): MediaRecorder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -49,10 +54,16 @@ class AndroidAudioRecorder(
             recorder = this
         }
         
+        // Start silence detection when recording starts
+        startSilenceDetection()
+        
         Log.d(TAG, "Recording started with audio source: ${getAudioSourceName(audioSource)}")
     }
 
     override fun stop() {
+        // Stop silence detection when recording stops
+        stopSilenceDetection()
+        
         recorder?.apply {
             try { stop() } catch (_: Exception) {}
             release()
@@ -65,6 +76,8 @@ class AndroidAudioRecorder(
     fun pause() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             recorder?.pause()
+            // Pause silence detection when recording is paused
+            stopSilenceDetection()
             Log.d(TAG, "Recording paused")
         }
     }
@@ -72,6 +85,8 @@ class AndroidAudioRecorder(
     fun resume() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             recorder?.resume()
+            // Resume silence detection when recording resumes
+            startSilenceDetection()
             Log.d(TAG, "Recording resumed")
         }
     }
@@ -152,4 +167,64 @@ class AndroidAudioRecorder(
     fun getCurrentAudioSource(): Int = currentAudioSource
     
     fun isRecording(): Boolean = recorder != null
+    
+    /**
+     * Set callback for silence detection events
+     */
+    fun setSilenceDetectionCallback(callback: (Int) -> Unit) {
+        onSilenceDetected = callback
+    }
+    
+    /**
+     * Start monitoring for silence during recording
+     */
+    private fun startSilenceDetection() {
+        try {
+            Log.d(TAG, "Starting silence detection")
+            
+            silenceDetector = SilenceDetector { silenceDurationSeconds ->
+                Log.w(TAG, "Silence detected for ${silenceDurationSeconds} seconds")
+                onSilenceDetected?.invoke(silenceDurationSeconds)
+            }
+            
+            silenceDetector?.startMonitoring()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting silence detection", e)
+            // Don't let silence detection failure prevent recording
+        }
+    }
+    
+    /**
+     * Stop silence monitoring
+     */
+    private fun stopSilenceDetection() {
+        try {
+            Log.d(TAG, "Stopping silence detection")
+            silenceDetector?.stopMonitoring()
+            silenceDetector = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping silence detection", e)
+        }
+    }
+    
+    /**
+     * Get current silence duration in seconds
+     */
+    fun getCurrentSilenceDuration(): Int {
+        return silenceDetector?.getCurrentSilenceDuration() ?: 0
+    }
+    
+    /**
+     * Check if currently detecting silence
+     */
+    fun isCurrentlySilent(): Boolean {
+        return silenceDetector?.isCurrentlySilent() ?: false
+    }
+    
+    /**
+     * Reset silence counter (useful when user manually checks microphone)
+     */
+    fun resetSilenceCounter() {
+        silenceDetector?.resetSilenceCounter()
+    }
 }

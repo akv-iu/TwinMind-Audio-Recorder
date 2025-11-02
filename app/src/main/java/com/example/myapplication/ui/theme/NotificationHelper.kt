@@ -24,6 +24,10 @@ class NotificationHelper(private val context: Context) {
         private const val STORAGE_CHANNEL_ID = "storage_warnings_channel"
         private const val STORAGE_CHANNEL_NAME = "Storage Warnings"
         private const val STORAGE_NOTIFICATION_ID = 2003
+        
+        private const val SILENCE_CHANNEL_ID = "silence_warnings_channel"
+        private const val SILENCE_CHANNEL_NAME = "Audio Silence Warnings"
+        private const val SILENCE_NOTIFICATION_ID = 2004
     }
     
     init {
@@ -62,13 +66,22 @@ class NotificationHelper(private val context: Context) {
                 description = "Warnings when storage is running low during recording"
             }
             
-            notificationManager.createNotificationChannels(listOf(pauseChannel, audioSourceChannel, storageChannel))
+            // Silence warning channel
+            val silenceChannel = NotificationChannel(
+                SILENCE_CHANNEL_ID,
+                SILENCE_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Warnings when no audio is detected during recording"
+            }
+            
+            notificationManager.createNotificationChannels(listOf(pauseChannel, audioSourceChannel, storageChannel, silenceChannel))
         }
     }
     
     fun showRecordingPausedNotification() {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         
         val pendingIntent = PendingIntent.getActivity(
@@ -106,7 +119,7 @@ class NotificationHelper(private val context: Context) {
      */
     fun showAudioSourceChangeNotification(deviceName: String, isRecording: Boolean = false) {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         
         val pendingIntent = PendingIntent.getActivity(
@@ -152,7 +165,7 @@ class NotificationHelper(private val context: Context) {
      */
     fun showLowStorageNotification(availableMB: Long, isCritical: Boolean) {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         
         val pendingIntent = PendingIntent.getActivity(
@@ -199,7 +212,7 @@ class NotificationHelper(private val context: Context) {
      */
     fun showInsufficientStorageNotification(availableMB: Long) {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         
         val pendingIntent = PendingIntent.getActivity(
@@ -233,5 +246,51 @@ class NotificationHelper(private val context: Context) {
      */
     fun hideStorageNotifications() {
         NotificationManagerCompat.from(context).cancel(STORAGE_NOTIFICATION_ID)
+    }
+    
+    /**
+     * Show silence detection warning notification
+     */
+    fun showSilenceWarningNotification(silenceDurationSeconds: Int) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT 
+            else 
+                PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        val notification = NotificationCompat.Builder(context, SILENCE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("No Audio Detected - Check Microphone")
+            .setContentText("Recording has been silent for ${silenceDurationSeconds} seconds")
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("No audio input detected for ${silenceDurationSeconds} seconds. Please check that your microphone is working and positioned correctly. Ensure microphone permissions are granted and the microphone is not muted."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .addAction(
+                android.R.drawable.ic_media_play,
+                "Check Mic",
+                pendingIntent
+            )
+            .build()
+        
+        try {
+            NotificationManagerCompat.from(context).notify(SILENCE_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            // Notification permission not granted - silently fail
+        }
+    }
+    
+    /**
+     * Hide silence warning notification
+     */
+    fun hideSilenceWarningNotification() {
+        NotificationManagerCompat.from(context).cancel(SILENCE_NOTIFICATION_ID)
     }
 }
