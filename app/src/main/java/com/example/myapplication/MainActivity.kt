@@ -40,9 +40,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myapplication.ui.theme.RecordingViewModel
 import com.example.myapplication.ui.theme.RecordingItem
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import com.example.myapplication.permissions.NotificationPermissionHelper
 import java.text.SimpleDateFormat
 import java.util.*
 import android.content.Intent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 class MainActivity : ComponentActivity() {
 
@@ -76,6 +84,11 @@ class MainActivity : ComponentActivity() {
             // Add Bluetooth permission for Android 12+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            
+            // Add foreground service permissions for Android 14+ (API 34)
+            if (Build.VERSION.SDK_INT >= 34) {
+                permissions.add(Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
             }
             
             multiplePermissionLauncher.launch(permissions.toTypedArray())
@@ -119,6 +132,45 @@ fun AudioRecorderApp() {
     val timerText by viewModel.timerText
     val recordings by viewModel.recordings
     val currentlyPlayingItem by viewModel.currentlyPlayingItem
+    
+    // Notification permission check
+    var showNotificationDialog by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    
+    // Check notification permissions when recording starts
+    LaunchedEffect(status) {
+        if (status is RecordingViewModel.Status.Recording && !NotificationPermissionHelper.areNotificationsEnabled(context)) {
+            showNotificationDialog = true
+        }
+    }
+    
+    // Notification permission dialog
+    if (showNotificationDialog) {
+        AlertDialog(
+            onDismissRequest = { showNotificationDialog = false },
+            title = { Text("Lock Screen Notifications") },
+            text = { 
+                Text("To see recording status on your lock screen, please enable notifications for this app in Settings.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    try {
+                        context.startActivity(NotificationPermissionHelper.getNotificationSettingsIntent(context))
+                    } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "Error opening notification settings", e)
+                    }
+                    showNotificationDialog = false
+                }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNotificationDialog = false }) {
+                    Text("Later")
+                }
+            }
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()

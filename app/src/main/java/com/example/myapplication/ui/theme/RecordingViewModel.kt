@@ -23,6 +23,10 @@ import java.util.*
 import java.util.concurrent.Executor
 import com.example.myapplication.audio.AudioDeviceManager
 import com.example.myapplication.storage.StorageManager
+import com.example.myapplication.service.RecordingService
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
 
 class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -54,6 +58,10 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
             testStorageChecker()
             
             updateStorageStatus()
+            
+            // Bind to recording service
+            bindToRecordingService()
+            
             android.util.Log.i("RecordingViewModel", "==========================================")
             android.util.Log.i("RecordingViewModel", "VIEWMODEL INITIALIZATION COMPLETED!")
             android.util.Log.i("RecordingViewModel", "==========================================")
@@ -111,6 +119,47 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     
     // Silence detection state
     private var isShowingSilenceWarning = false
+    
+    // Recording service integration
+    private var recordingService: RecordingService? = null
+    private var isServiceBound = false
+    
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as RecordingService.RecordingServiceBinder
+            recordingService = binder.getService()
+            isServiceBound = true
+            
+            // Set up service callback
+            recordingService?.setCallback(object : RecordingService.RecordingServiceCallback {
+                override fun onPauseResumeRequested() {
+                    android.util.Log.d("RecordingViewModel", "Pause/Resume requested from service")
+                    togglePause()
+                }
+                
+                override fun onStopRequested() {
+                    android.util.Log.d("RecordingViewModel", "Stop requested from service")
+                    stopRecording()
+                }
+            })
+            
+            // Sync current state with service
+            val currentStatus = _status.value
+            recordingService?.syncWithViewModelState(
+                isRecording = currentStatus is Status.Recording,
+                isPaused = currentStatus is Status.Paused,
+                currentTimer = _timerText.value
+            )
+            
+            android.util.Log.d("RecordingViewModel", "RecordingService connected")
+        }
+        
+        override fun onServiceDisconnected(name: ComponentName?) {
+            recordingService = null
+            isServiceBound = false
+            android.util.Log.d("RecordingViewModel", "RecordingService disconnected")
+        }
+    }
 
     fun toggleRecord() {
         when (_status.value) {
@@ -121,10 +170,20 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     }
     
     fun togglePause() {
+        android.util.Log.d("RecordingViewModel", "=== TOGGLE PAUSE CALLED ===")
+        android.util.Log.d("RecordingViewModel", "Current status: ${_status.value}")
         when (_status.value) {
-            is Status.Recording -> pauseRecording()
-            is Status.Paused -> resumeRecording()
-            is Status.Stopped -> { /* No action when stopped */ }
+            is Status.Recording -> {
+                android.util.Log.d("RecordingViewModel", "Pausing recording...")
+                pauseRecording()
+            }
+            is Status.Paused -> {
+                android.util.Log.d("RecordingViewModel", "Resuming recording...")
+                resumeRecording()
+            }
+            is Status.Stopped -> { 
+                android.util.Log.d("RecordingViewModel", "Cannot toggle - recording is stopped")
+            }
         }
     }
 
@@ -156,11 +215,25 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = Status.Recording
         startTimer()
         
+        // Sync with service after status change (with slight delay to ensure UI update completes)
+        viewModelScope.launch {
+            delay(50) // Small delay to ensure status change is processed
+            recordingService?.syncWithViewModelState(
+                isRecording = true,
+                isPaused = false,
+                currentTimer = _timerText.value
+            )
+        }
+        
         // Start monitoring audio device changes
         startAudioDeviceMonitoring()
         
         // Start monitoring storage during recording
         startStorageMonitoring()
+        
+        // Start recording service for lock screen display
+        android.util.Log.d("RecordingViewModel", "About to start recording service. Service bound: $isServiceBound, Service null: ${recordingService == null}")
+        startRecordingService()
         
         android.util.Log.d("RecordingViewModel", "Recording started with ${storageManager.getStorageDescription()}")
     }
@@ -186,6 +259,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = Status.Stopped
         _timerText.value = "00:00"
 
+        // Stop recording service
+        recordingService?.stopRecording()
+
         // Hide any call pause notifications
         if (isPausedForCall) {
             isPausedForCall = false
@@ -207,6 +283,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Stop storage monitoring
         stopStorageMonitoring()
+        
+        // Stop recording service
+        stopRecordingService()
     }
 
     /**
@@ -438,6 +517,19 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         pausedTimeMs = System.currentTimeMillis() - startTimeMs
         _status.value = Status.Paused
         
+        // Update recording service
+        recordingService?.pauseRecording(isPausedForCall)
+        
+        // Sync with service after status change (with slight delay to ensure UI update completes)
+        viewModelScope.launch {
+            delay(50) // Small delay to ensure status change is processed
+            recordingService?.syncWithViewModelState(
+                isRecording = false,
+                isPaused = true,
+                currentTimer = _timerText.value
+            )
+        }
+        
         // Don't save file yet - just pause the recording
     }
     
@@ -469,6 +561,19 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
             // Continue the timer from where we left off
             startTimeMs = System.currentTimeMillis() - pausedTimeMs
             startTimer()
+            
+            // Update recording service
+            recordingService?.resumeRecording()
+            
+            // Sync with service after status change (with slight delay to ensure UI update completes)
+            viewModelScope.launch {
+                delay(50) // Small delay to ensure status change is processed
+                recordingService?.syncWithViewModelState(
+                    isRecording = true,
+                    isPaused = false,
+                    currentTimer = _timerText.value
+                )
+            }
         } catch (e: Exception) {
             _status.value = Status.Stopped
             _timerText.value = "00:00"
@@ -503,7 +608,14 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         timerJob = viewModelScope.launch(Dispatchers.Main) {
             while (isActive && _status.value is Status.Recording) {
                 val secs = elapsedSeconds()
-                _timerText.value = String.format("%02d:%02d", secs / 60, secs % 60)
+                val timerText = String.format("%02d:%02d", secs / 60, secs % 60)
+                _timerText.value = timerText
+                
+                // Update service notification timer
+                recordingService?.let { service ->
+                    service.updateTimer(timerText)
+                } ?: android.util.Log.w("RecordingViewModel", "Service not available for timer update: $timerText")
+                
                 delay(500)
             }
         }
@@ -691,6 +803,143 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             "Audio detected"
         }
+    }
+    
+    /**
+     * Bind to recording service for lock screen display
+     */
+    private fun bindToRecordingService() {
+        try {
+            val intent = android.content.Intent(getApplication(), RecordingService::class.java)
+            getApplication<Application>().bindService(intent, serviceConnection, android.content.Context.BIND_AUTO_CREATE)
+            android.util.Log.d("RecordingViewModel", "Binding to RecordingService")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error binding to RecordingService", e)
+        }
+    }
+    
+    /**
+     * Unbind from recording service
+     */
+    private fun unbindFromRecordingService() {
+        try {
+            if (isServiceBound) {
+                getApplication<Application>().unbindService(serviceConnection)
+                isServiceBound = false
+                recordingService = null
+                android.util.Log.d("RecordingViewModel", "Unbound from RecordingService")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error unbinding from RecordingService", e)
+        }
+    }
+    
+    /**
+     * Start recording service for lock screen display
+     */
+    private fun startRecordingService() {
+        try {
+            android.util.Log.d("RecordingViewModel", "=== STARTING RECORDING SERVICE ===")
+            android.util.Log.d("RecordingViewModel", "Service bound: $isServiceBound")
+            android.util.Log.d("RecordingViewModel", "Service object: ${recordingService != null}")
+            
+            // If service isn't bound yet, bind it first
+            if (!isServiceBound) {
+                android.util.Log.d("RecordingViewModel", "Service not bound, binding first...")
+                bindToRecordingService()
+                // Wait a moment for binding to complete, then start
+                viewModelScope.launch {
+                    delay(100) // Give binding time to complete
+                    startRecordingServiceInternal()
+                }
+            } else {
+                startRecordingServiceInternal()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error starting recording service", e)
+        }
+    }
+    
+    private fun startRecordingServiceInternal() {
+        try {
+            // Start the service first
+            val serviceIntent = android.content.Intent(getApplication(), RecordingService::class.java).apply {
+                action = RecordingService.COMMAND_START_RECORDING
+            }
+            
+            android.util.Log.d("RecordingViewModel", "Starting foreground service with intent")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getApplication<Application>().startForegroundService(serviceIntent)
+            } else {
+                getApplication<Application>().startService(serviceIntent)
+            }
+            
+            // Then call the bound service method if available
+            if (recordingService != null) {
+                recordingService?.startRecording()
+                android.util.Log.d("RecordingViewModel", "Recording service started via bound service")
+            } else {
+                android.util.Log.w("RecordingViewModel", "Service not bound, using intent only")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error in startRecordingServiceInternal", e)
+        }
+    }
+    
+    /**
+     * Stop recording service
+     */
+    private fun stopRecordingService() {
+        try {
+            recordingService?.stopRecording()
+            android.util.Log.d("RecordingViewModel", "Recording service stopped")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error stopping recording service", e)
+        }
+    }
+    
+    /**
+     * Get current recording service status for debugging
+     */
+    fun getServiceStatus(): String {
+        return if (isServiceBound) {
+            when {
+                recordingService?.isRecording() == true -> "Service: Recording"
+                recordingService?.isPaused() == true -> "Service: Paused"
+                recordingService?.isStopped() == true -> "Service: Stopped"
+                else -> "Service: Unknown"
+            }
+        } else {
+            "Service: Not bound"
+        }
+    }
+    
+    /**
+     * Test method to manually trigger service - for debugging
+     */
+    fun testRecordingService() {
+        android.util.Log.w("RecordingViewModel", "=== TESTING RECORDING SERVICE ===")
+        android.util.Log.w("RecordingViewModel", "Service bound: $isServiceBound")
+        android.util.Log.w("RecordingViewModel", "Service object: ${recordingService != null}")
+        android.util.Log.w("RecordingViewModel", "Service status: ${getServiceStatus()}")
+        
+        try {
+            // Try to start service manually
+            val serviceIntent = android.content.Intent(getApplication(), RecordingService::class.java).apply {
+                action = RecordingService.COMMAND_START_RECORDING
+            }
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getApplication<Application>().startForegroundService(serviceIntent)
+                android.util.Log.w("RecordingViewModel", "Started foreground service manually")
+            } else {
+                getApplication<Application>().startService(serviceIntent)
+                android.util.Log.w("RecordingViewModel", "Started service manually")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error in manual service test", e)
+        }
+        android.util.Log.w("RecordingViewModel", "=== END SERVICE TEST ===")
     }
 }
 

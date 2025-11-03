@@ -4,7 +4,9 @@ A simple Android audio recording app built with Jetpack Compose that supports pa
 
 ## Core Features
 
-- **True Pause/Resume**: Pause and resume recording to the same file (no segments)
+- **True Pause/Resume**: Puses and resume recording to the same file (no segments)
+- **Lock Screen Recording Status**: Live recording timer and controls visible on lock screen
+- **Interactive Notification Controls**: Pause/resume/stop recording directly from notification bar
 - **Call Detection**: Automatic pause notifications during phone calls  
 - **Silent Audio Detection**: Warns when no audio input is detected for 10+ seconds
 - **Audio Device Switching**: Automatic switching between Bluetooth, wired, and device microphones
@@ -50,6 +52,15 @@ MediaPlayer wrapper for audio playback functionality.
 - `stop()` - Stops playback and releases resources
 - `setOnCompletionListener()` - Sets callback for when playback finishes
 
+### `RecordingService.kt`
+Foreground service that displays live recording status on lock screen with interactive controls.
+- `startForeground()` - Creates persistent notification with timer and pause/stop buttons
+- `updateNotification()` - Updates notification with current recording status and elapsed time
+- `onStartCommand()` - Handles notification button presses (pause/resume/stop actions)
+- `syncWithViewModelState()` - Synchronizes service status with ViewModel recording state
+- `createNotification()` - Builds stopwatch-style notification for lock screen visibility
+- Uses `CATEGORY_STOPWATCH` and `IMPORTANCE_HIGH` for optimal lock screen display
+
 ### `NotificationHelper.kt`
 Manages notifications for recording events including call detection, audio source changes, storage warnings, and silence detection.
 - `showRecordingPausedNotification()` - Displays call interruption notification
@@ -81,6 +92,14 @@ Monitors device storage and manages recording based on available space.
 - `getStorageInfo()` - Returns detailed storage statistics
 - `getEstimatedRecordingTimeMinutes()` - Calculates estimated recording time based on available storage
 - Storage thresholds: 50MB minimum to start, 100MB warning level, 25MB critical stop level
+
+### `NotificationPermissionHelper.kt`
+Utility class for managing notification permissions and guiding users for optimal lock screen experience.
+- `areNotificationsEnabled()` - Checks if app notifications are enabled
+- `canShowOnLockScreen()` - Determines if notifications can appear on lock screen
+- `getNotificationSettingsIntent()` - Creates intent to open notification settings for the app
+- `getLockScreenSettingsIntent()` - Creates intent to open device lock screen settings
+- `getPermissionMessage()` - Provides user-friendly permission status messages
 
 ## How It Works
 
@@ -130,31 +149,47 @@ Recordings are saved to app external files directory as:
 ## Requirements
 
 - **Android N (API 24+)** - For true pause/resume functionality
+- **Android O (API 26+)** - Recommended for optimal notification channels and lock screen display
 - **Permissions**: 
   - `RECORD_AUDIO` - Required for audio recording and silence detection
+  - `FOREGROUND_SERVICE` - Required for persistent recording notifications
+  - `FOREGROUND_SERVICE_MICROPHONE` - Required for microphone access in foreground service (Android 14+)
+  - `POST_NOTIFICATIONS` - Required for lock screen notifications (Android 13+)
   - `READ_PHONE_STATE` - Optional for call detection notifications
-  - `POST_NOTIFICATIONS` - Optional for all notification features
   - `BLUETOOTH_CONNECT` - Optional for Bluetooth headset detection (Android 12+)
   - `MODIFY_AUDIO_SETTINGS` - Optional for audio device management
 
 ## Usage
 
 1. **Grant Permissions** - Allow microphone, phone, Bluetooth, and notification access when prompted
-2. **Check Storage** - Ensure device has at least 50MB free storage for recording
-3. **Start Recording** - Tap the record button to begin (automatic silence detection starts)
-4. **Monitor Notifications** - App will notify you of:
+2. **Enable Lock Screen Notifications** - For full lock screen functionality, ensure notifications are enabled in Settings
+3. **Check Storage** - Ensure device has at least 50MB free storage for recording
+4. **Start Recording** - Tap the record button to begin (live status appears on lock screen)
+5. **Lock Screen Control** - When recording, you can:
+   - View live timer updates on lock screen
+   - Pause/resume recording using notification buttons
+   - Stop recording directly from notification
+6. **Monitor Notifications** - App will notify you of:
    - Phone call interruptions (auto-pause)
    - Audio device changes (Bluetooth/wired headset connect/disconnect)
    - Storage warnings (when space runs low)
    - Silent audio detection (no input for 10+ seconds)
-5. **Pause/Resume** - Use pause button during calls or breaks (optional)
-6. **Stop** - Tap stop to finalize and save the recording
-7. **Playback** - Tap any saved recording to play with visual highlighting
+7. **In-App Control** - Use main app for full control and monitoring
+8. **Playback** - Tap any saved recording to play with visual highlighting
 
 ## Notification Features
 
+### Lock Screen Recording Status
+- **Live Timer Display**: Shows real-time recording duration on lock screen (updates every second)
+- **Interactive Controls**: Pause/Resume and Stop buttons work directly from notification
+- **Status Indicators**: Clear display of recording state ("Recording", "Paused", "Paused - Call")
+- **Stopwatch-Style Design**: Uses Android's stopwatch notification pattern for consistency
+- **High Priority Display**: Notification configured for optimal lock screen visibility
+
+### Event Notifications
 - **Call Detection**: Shows when recording is paused due to phone calls
 - **Audio Source Changes**: Alerts when switching between microphones/headsets
 - **Storage Warnings**: Warns when storage is running low during recording
 - **Silent Audio Detection**: "No audio detected - Check microphone" after 10s silence
+- **Permission Guidance**: Prompts user to enable notifications for lock screen display
 - **Smart Intent Handling**: Notifications bring existing app to foreground (no duplicate instances)
