@@ -28,6 +28,10 @@ class NotificationHelper(private val context: Context) {
         private const val SILENCE_CHANNEL_ID = "silence_warnings_channel"
         private const val SILENCE_CHANNEL_NAME = "Audio Silence Warnings"
         private const val SILENCE_NOTIFICATION_ID = 2004
+        
+        private const val AUDIO_FOCUS_CHANNEL_ID = "audio_focus_channel"
+        private const val AUDIO_FOCUS_CHANNEL_NAME = "Audio Focus Lost"
+        private const val AUDIO_FOCUS_NOTIFICATION_ID = 2005
     }
     
     init {
@@ -75,7 +79,22 @@ class NotificationHelper(private val context: Context) {
                 description = "Warnings when no audio is detected during recording"
             }
             
-            notificationManager.createNotificationChannels(listOf(pauseChannel, audioSourceChannel, storageChannel, silenceChannel))
+            // Audio focus lost channel
+            val audioFocusChannel = NotificationChannel(
+                AUDIO_FOCUS_CHANNEL_ID,
+                AUDIO_FOCUS_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications when recording is paused due to audio focus loss"
+            }
+            
+            notificationManager.createNotificationChannels(listOf(
+                pauseChannel, 
+                audioSourceChannel, 
+                storageChannel, 
+                silenceChannel,
+                audioFocusChannel
+            ))
         }
     }
     
@@ -292,5 +311,59 @@ class NotificationHelper(private val context: Context) {
      */
     fun hideSilenceWarningNotification() {
         NotificationManagerCompat.from(context).cancel(SILENCE_NOTIFICATION_ID)
+    }
+    
+    /**
+     * Show audio focus lost notification with resume/stop actions
+     */
+    fun showAudioFocusLostNotification() {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        
+        val pendingIntent = PendingIntent.getActivity(
+            context, 
+            0, 
+            intent, 
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT 
+            else 
+                PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        val notification = NotificationCompat.Builder(context, AUDIO_FOCUS_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_pause)
+            .setContentTitle("Paused – Audio focus lost")
+            .setContentText("Another app is using audio. Tap to resume when ready.")
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("Recording paused because another app (music, video, navigation) is using audio. Close the other app or tap Resume when ready to continue recording."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOngoing(true) // Keep until manually dismissed or recording resumes
+            .setAutoCancel(false)
+            .setContentIntent(pendingIntent)
+            .addAction(
+                android.R.drawable.ic_media_play,
+                "Resume",
+                pendingIntent
+            )
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Stop",
+                pendingIntent
+            )
+            .build()
+        
+        try {
+            NotificationManagerCompat.from(context).notify(AUDIO_FOCUS_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            // Notification permission not granted - silently fail
+        }
+    }
+    
+    /**
+     * Hide audio focus lost notification
+     */
+    fun hideAudioFocusLostNotification() {
+        NotificationManagerCompat.from(context).cancel(AUDIO_FOCUS_NOTIFICATION_ID)
     }
 }

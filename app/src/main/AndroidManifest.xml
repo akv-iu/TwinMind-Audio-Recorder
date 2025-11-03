@@ -22,6 +22,9 @@
     
     <!-- Bluetooth features - optional -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    
+    <!-- WorkManager may need this for background processing -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Only needed on Android 12 and below (for getExternalFilesDir) -->
     <uses-permission
@@ -32,6 +35,7 @@
         android:maxSdkVersion="28" />
 
     <application
+        android:name=".RecorderApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

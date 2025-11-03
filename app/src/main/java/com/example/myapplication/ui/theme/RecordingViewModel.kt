@@ -22,6 +22,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executor
 import com.example.myapplication.audio.AudioDeviceManager
+import com.example.myapplication.audio.AudioFocusManager
 import com.example.myapplication.storage.StorageManager
 import com.example.myapplication.service.RecordingService
 import android.content.ComponentName
@@ -52,6 +53,9 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.w("TwinMindApp", "External dir writable: ${externalDir?.canWrite()}")
             
             setupPhoneStateListener()
+            
+            // Initialize audio focus manager
+            setupAudioFocusManager()
             
             // Test storage immediately during initialization
             android.util.Log.w("RecordingViewModel", "TESTING STORAGE DURING INIT...")
@@ -119,6 +123,10 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
     
     // Silence detection state
     private var isShowingSilenceWarning = false
+    
+    // Audio focus management
+    private lateinit var audioFocusManager: AudioFocusManager
+    private var isPausedForAudioFocus = false
     
     // Recording service integration
     private var recordingService: RecordingService? = null
@@ -203,6 +211,12 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
 
         currentFile = file
         
+        // Request audio focus before starting recording
+        if (!audioFocusManager.requestAudioFocus()) {
+            android.util.Log.w("RecordingViewModel", "Could not obtain audio focus - recording may be interrupted")
+            // Continue anyway but warn user
+        }
+        
         // Set up silence detection callback before starting
         recorder.setSilenceDetectionCallback { silenceDurationSeconds ->
             handleSilenceDetected(silenceDurationSeconds)
@@ -273,6 +287,15 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
             isShowingSilenceWarning = false
             notificationHelper.hideSilenceWarningNotification()
         }
+        
+        // Hide audio focus notification if showing
+        if (isPausedForAudioFocus) {
+            isPausedForAudioFocus = false
+            notificationHelper.hideAudioFocusLostNotification()
+        }
+        
+        // Abandon audio focus
+        audioFocusManager.abandonAudioFocus()
 
         currentFile = null
         startTimeMs = 0L
@@ -715,6 +738,55 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     
+    /**
+     * Set up audio focus manager to handle focus changes
+     */
+    private fun setupAudioFocusManager() {
+        try {
+            android.util.Log.d("RecordingViewModel", "Setting up audio focus manager")
+            
+            audioFocusManager = AudioFocusManager(
+                context = getApplication(),
+                onFocusLost = {
+                    android.util.Log.d("RecordingViewModel", "Audio focus lost - pausing recording")
+                    handleAudioFocusLost()
+                },
+                onFocusGained = {
+                    android.util.Log.d("RecordingViewModel", "Audio focus regained - resuming recording")
+                    handleAudioFocusGained()
+                }
+            )
+            
+            android.util.Log.d("RecordingViewModel", "Audio focus manager initialized successfully")
+        } catch (e: Exception) {
+            android.util.Log.e("RecordingViewModel", "Error setting up audio focus manager", e)
+        }
+    }
+    
+    /**
+     * Handle audio focus lost - pause recording and show notification
+     */
+    private fun handleAudioFocusLost() {
+        if (_status.value is Status.Recording) {
+            isPausedForAudioFocus = true
+            pauseRecording()
+            notificationHelper.showAudioFocusLostNotification()
+            android.util.Log.d("RecordingViewModel", "Recording paused due to audio focus loss")
+        }
+    }
+    
+    /**
+     * Handle audio focus regained - resume recording if paused for focus
+     */
+    private fun handleAudioFocusGained() {
+        if (_status.value is Status.Paused && isPausedForAudioFocus) {
+            isPausedForAudioFocus = false
+            notificationHelper.hideAudioFocusLostNotification()
+            resumeRecording()
+            android.util.Log.d("RecordingViewModel", "Recording resumed after audio focus regained")
+        }
+    }
+    
     override fun onCleared() {
         super.onCleared()
         
@@ -742,6 +814,12 @@ class RecordingViewModel(app: Application) : AndroidViewModel(app) {
         
         // Hide silence warning notifications
         notificationHelper.hideSilenceWarningNotification()
+        
+        // Clean up audio focus
+        if (::audioFocusManager.isInitialized) {
+            audioFocusManager.abandonAudioFocus()
+        }
+        notificationHelper.hideAudioFocusLostNotification()
     }
     
     /**

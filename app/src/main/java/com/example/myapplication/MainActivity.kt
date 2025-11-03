@@ -13,7 +13,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateBounds
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -242,8 +241,6 @@ fun AudioRecorderApp() {
         } else {
             Spacer(modifier = Modifier.height(32.dp))
         }
-
-
 
         // Recordings List
         if (recordings.isNotEmpty()) {

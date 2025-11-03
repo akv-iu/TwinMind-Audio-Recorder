@@ -21,6 +21,7 @@ class AndroidAudioRecorder(
     private var recorder: MediaRecorder? = null
     private var currentOutputFile: File? = null
     private var currentAudioSource: Int = MediaRecorder.AudioSource.MIC
+    private var fileOutputStream: FileOutputStream? = null
     
     // Silence detection
     private var silenceDetector: SilenceDetector? = null
@@ -42,11 +43,14 @@ class AndroidAudioRecorder(
         currentOutputFile = outputFile
         currentAudioSource = audioSource
         
+        // Create FileOutputStream and keep reference to close it properly
+        fileOutputStream = FileOutputStream(outputFile)
+        
         createRecorder().apply {
             setAudioSource(audioSource)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setOutputFile(FileOutputStream(outputFile).fd)
+            setOutputFile(fileOutputStream!!.fd)
 
             prepare()
             start()
@@ -65,12 +69,33 @@ class AndroidAudioRecorder(
         stopSilenceDetection()
         
         recorder?.apply {
-            try { stop() } catch (_: Exception) {}
+            try { 
+                stop()
+                Log.d(TAG, "MediaRecorder stopped")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping MediaRecorder", e)
+            }
             release()
+            Log.d(TAG, "MediaRecorder released")
         }
         recorder = null
+        
+        // Properly close FileOutputStream to finalize the file
+        fileOutputStream?.apply {
+            try {
+                flush()
+                close()
+                Log.d(TAG, "FileOutputStream closed and flushed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing FileOutputStream", e)
+            }
+        }
+        fileOutputStream = null
+        
+        currentOutputFile?.let { file ->
+            Log.d(TAG, "Recording stopped - File: ${file.absolutePath}, Size: ${file.length()} bytes")
+        }
         currentOutputFile = null
-        Log.d(TAG, "Recording stopped")
     }
 
     fun pause() {

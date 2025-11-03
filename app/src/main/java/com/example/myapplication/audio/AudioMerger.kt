@@ -8,19 +8,26 @@ class AudioMerger {
     
     companion object {
         private const val TAG = "AudioMerger"
+        private const val BUFFER_SIZE = 8192
     }
     
     /**
      * Merge multiple M4A/AAC audio files into a single file
-     * Note: This is a simple concatenation approach for M4A files
+     * Enhanced for chunk-based recording recovery with better error handling
      */
     fun mergeAudioFiles(inputFiles: List<File>, outputFile: File): Boolean {
-        if (inputFiles.isEmpty()) return false
+        if (inputFiles.isEmpty()) {
+            Log.e(TAG, "No input files provided for merging")
+            return false
+        }
+        
+        Log.d(TAG, "Merging ${inputFiles.size} audio files into ${outputFile.path}")
         
         if (inputFiles.size == 1) {
             // If only one file, just copy it
             return try {
                 inputFiles[0].copyTo(outputFile, overwrite = true)
+                Log.d(TAG, "Single file copied to output: ${outputFile.path}")
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Error copying single file", e)
@@ -28,7 +35,15 @@ class AudioMerger {
             }
         }
         
+        // Validate input files first
+        if (!validateInputFiles(inputFiles)) {
+            return false
+        }
+        
         return try {
+            // Ensure output directory exists
+            outputFile.parentFile?.mkdirs()
+            
             mergeM4AFiles(inputFiles, outputFile)
         } catch (e: Exception) {
             Log.e(TAG, "Error merging audio files", e)
@@ -39,30 +54,28 @@ class AudioMerger {
     private fun mergeM4AFiles(inputFiles: List<File>, outputFile: File): Boolean {
         try {
             FileOutputStream(outputFile).use { outputStream ->
-                var isFirst = true
+                val buffer = ByteArray(BUFFER_SIZE)
                 
-                for (inputFile in inputFiles) {
-                    if (!inputFile.exists() || inputFile.length() == 0L) {
-                        Log.w(TAG, "Skipping empty or non-existent file: ${inputFile.name}")
+                for ((index, inputFile) in inputFiles.withIndex()) {
+                    if (!inputFile.exists()) {
+                        Log.w(TAG, "Input file does not exist: ${inputFile.path}")
                         continue
                     }
                     
+                    Log.d(TAG, "Processing file ${index + 1}/${inputFiles.size}: ${inputFile.path} (${inputFile.length()} bytes)")
+                    
                     FileInputStream(inputFile).use { inputStream ->
-                        if (isFirst) {
-                            // For the first file, copy everything including headers
-                            inputStream.copyTo(outputStream)
-                            isFirst = false
-                        } else {
-                            // For subsequent files, we need to skip the M4A header
-                            // This is a simplified approach - for production use, consider using FFmpeg or MediaMuxer
-                            skipM4AHeader(inputStream)
-                            inputStream.copyTo(outputStream)
+                        var bytesRead: Int
+                        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                            outputStream.write(buffer, 0, bytesRead)
                         }
                     }
                 }
+                
+                outputStream.flush()
             }
             
-            Log.d(TAG, "Successfully merged ${inputFiles.size} files into ${outputFile.name}")
+            Log.d(TAG, "Successfully merged ${inputFiles.size} files into ${outputFile.path} (${outputFile.length()} bytes)")
             return true
             
         } catch (e: Exception) {
@@ -71,13 +84,57 @@ class AudioMerger {
         }
     }
     
-    private fun skipM4AHeader(inputStream: FileInputStream) {
-        // Simple approach: skip some bytes that typically contain M4A header
-        // Note: This is a basic implementation. For robust merging, use MediaMuxer or FFmpeg
-        try {
-            inputStream.skip(1024) // Skip approximate header size
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not skip header", e)
+    /**
+     * Validate that all input files exist and are readable
+     */
+    fun validateInputFiles(inputFiles: List<File>): Boolean {
+        if (inputFiles.isEmpty()) {
+            Log.e(TAG, "No input files provided")
+            return false
+        }
+        
+        for (file in inputFiles) {
+            if (!file.exists()) {
+                Log.e(TAG, "Input file does not exist: ${file.path}")
+                return false
+            }
+            
+            if (!file.canRead()) {
+                Log.e(TAG, "Cannot read input file: ${file.path}")
+                return false
+            }
+            
+            if (file.length() == 0L) {
+                Log.w(TAG, "Input file is empty: ${file.path}")
+            }
+        }
+        
+        return true
+    }
+    
+    /**
+     * Get total duration estimate for all input files
+     * This is an approximation based on file sizes
+     */
+    fun getEstimatedTotalDuration(inputFiles: List<File>): Long {
+        val totalBytes = inputFiles.sumOf { it.length() }
+        // Assume ~128 kbps AAC encoding (16 KB/sec)
+        val bytesPerSecond = 16 * 1024
+        return (totalBytes / bytesPerSecond) * 1000L // Convert to milliseconds
+    }
+    
+    /**
+     * Clean up temporary files after merge operation
+     */
+    fun cleanupTemporaryFiles(files: List<File>) {
+        for (file in files) {
+            try {
+                if (file.exists() && file.delete()) {
+                    Log.d(TAG, "Deleted temporary file: ${file.path}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not delete temporary file: ${file.path}", e)
+            }
         }
     }
     
